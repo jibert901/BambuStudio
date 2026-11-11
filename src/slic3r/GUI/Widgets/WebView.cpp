@@ -142,6 +142,13 @@ bool user_data_path_usable(const wxString &path)
 void enable_default_webview2_cdp_for_internal_builds()
 {
 #if !BBL_RELEASE_TO_PUBLIC
+    // The CDP port lets any local process (any user on this PC) drive every
+    // WebView, including logged-in Bambu pages and their app bridge, so only
+    // open it when devtools were explicitly enabled.
+    auto *cfg = Slic3r::GUI::wxGetApp().app_config;
+    if (!cfg || cfg->get("enable_webview_devtools") != "true")
+        return;
+
     wxString existing;
     if (wxGetEnv("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS", &existing) && !existing.empty())
         return;

@@ -6,6 +6,7 @@
 #include <wx/choice.h>
 #include <wx/dialog.h>
 #include <wx/listbox.h>
+#include <wx/msgdlg.h>
 #include <wx/sizer.h>
 #include <wx/textdlg.h>
 #include <wx/webview.h>
@@ -39,6 +40,14 @@ std::string normalize_url(std::string url)
     return url;
 }
 
+// Camera streams are web pages; never let this view open file://, the app's
+// internal bbl:/memory: handlers, or anything else that is not plain web.
+bool is_web_url(const wxString &url)
+{
+    const wxString u = url.Lower();
+    return u.StartsWith("http://") || u.StartsWith("https://");
+}
+
 } // namespace
 
 ExtraCameraPanel::ExtraCameraPanel(wxWindow *parent)
@@ -57,6 +66,20 @@ ExtraCameraPanel::ExtraCameraPanel(wxWindow *parent)
     // helper also provides the no-backend placeholder, dark-mode background and
     // devtools gating. Its navigation logs redact credentials, queries and IPs.
     m_web = WebView::CreateWebView(this, "about:blank", "ExtraCamera");
+
+    // The helper registers the app's "wx" JS bridge on every view. Camera pages
+    // are third-party content, so swallow their messages here instead of
+    // letting them propagate to a parent that might one day handle them.
+    m_web->Bind(wxEVT_WEBVIEW_SCRIPT_MESSAGE_RECEIVED, [](wxWebViewEvent &) {});
+    // Keep the view on web content (no file://, bbl:, memory:, ...).
+    m_web->Bind(wxEVT_WEBVIEW_NAVIGATING, [](wxWebViewEvent &e) {
+        if (e.GetURL() == "about:blank" || is_web_url(e.GetURL()))
+            e.Skip();
+        else
+            e.Veto();
+    });
+    // Pop-ups from a camera page would otherwise be routed into the app.
+    m_web->Bind(wxEVT_WEBVIEW_NEWWINDOW, [](wxWebViewEvent &) {});
 
     auto *main = new wxBoxSizer(wxVERTICAL);
     main->Add(top, 0, wxEXPAND);
@@ -164,6 +187,10 @@ void ExtraCameraPanel::load_selected()
         return;
     }
     const std::string &url = m_entries[m_selected].url;
+    if (!is_web_url(to_wx(url))) { // e.g. a hand-edited config entry
+        unload();
+        return;
+    }
     if (url == m_loaded_url)
         return;
     m_loaded_url = url;
@@ -219,6 +246,10 @@ void ExtraCameraPanel::on_manage()
         const std::string url = normalize_url(to_std(url_dlg.GetValue()));
         if (url.empty())
             return false;
+        if (!is_web_url(to_wx(url))) {
+            wxMessageBox(_L("Only http:// and https:// stream URLs are supported."), _L("Camera"), wxOK | wxICON_WARNING, &dlg);
+            return false;
+        }
         e.name = to_std(name_dlg.GetValue());
         e.url  = url;
         return true;
